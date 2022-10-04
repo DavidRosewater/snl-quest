@@ -7,6 +7,7 @@ import calendar
 import threading
 import logging
 import copy
+import csv
 
 import pandas as pd
 from kivy.app import App
@@ -14,7 +15,7 @@ from kivy.animation import Animation
 from kivy.event import EventDispatcher
 from kivy.properties import NumericProperty
 
-from es_gui.resources.widgets.common import LoadingModalView
+from es_gui.resources.widgets.common import LoadingModalView,WarningPopup
 
 
 DATA_HOME = 'data'
@@ -126,6 +127,39 @@ class DataManager(EventDispatcher):
         
         thread = threading.Thread(target=_scan_btm_data_bank)
         thread.start()       
+
+    def scan_equity_data_bank(self):
+        """Scans the equity data bank to determine what data has been downloaded."""
+        # Check if data bank exists.
+        # Check if data bank exists.
+        try:
+            os.listdir(self.data_bank_root)
+        except FileNotFoundError:
+            return
+
+        # Open loading screen.
+        self.loading_screen = LoadingModalView()
+        self.loading_screen.loading_text.text = 'Scanning data files...'
+        self.loading_screen.open()
+
+        self.n_threads_scanning = 1
+
+        def _scan_equity_data_bank():
+            # Quit?
+            if App.get_running_app().root.stop.is_set():
+                # Stop running this thread so the main Python process can exit.
+                return
+
+            self._scan_power_plant_data_bank()
+            self._scan_btm_pv_profile_data_bank()
+            
+
+            self.n_threads_scanning -= 1
+        
+        thread = threading.Thread(target=_scan_equity_data_bank)
+        thread.start()
+           
+    
     
     def _scan_rate_structure_data_bank(self):
         """Scans the saved rate structure data bank."""
@@ -223,6 +257,24 @@ class DataManager(EventDispatcher):
             
         self.data_bank['PV profiles'] = pv_profile_data_bank
     
+    def _scan_power_plant_data_bank(self):
+        """Scans the saved power plant data bank."""
+        power_plant_root = os.path.join(self.data_bank_root, 'power_plant')
+        power_plant_data_bank = {}
+
+        try:
+            os.listdir(power_plant_root)
+        except FileNotFoundError:
+            return
+
+        for power_plant in os.scandir(power_plant_root):
+            if not power_plant.name.startswith('.'):
+                plant_key = power_plant.name.split('.')[0]
+                plant_val = power_plant.path
+                power_plant_data_bank[plant_key] = plant_val
+            
+        self.data_bank['power plants'] = power_plant_data_bank
+
     def get_rate_structures(self):
         """Returns a dictionary of all of the rate structures saved to the data bank."""
         # Sort by name alphabetically before returning.
@@ -250,6 +302,16 @@ class DataManager(EventDispatcher):
             return_dict = collections.OrderedDict(sorted(self.data_bank['PV profiles'].items(), key=lambda t: t[0]))
         except KeyError:
             raise(KeyError('It looks like no PV profiles have been saved.'))
+
+        return return_dict
+    
+    def get_plants(self):
+        """Returns a dictionary of all of the power plants saved to the data bank."""
+        # Sort by name alphabetically before returning.
+        try:
+            return_dict = collections.OrderedDict(sorted(self.data_bank['power plants'].items(), key=lambda t: t[0]))
+        except KeyError:
+            raise(KeyError('It looks like no power plants have been saved.'))
 
         return return_dict
     
@@ -1232,6 +1294,20 @@ class DataManager(EventDispatcher):
             model_params_all = json.load(fp)
 
         return model_params_all
+
+    def get_power_plant_model_params(self):
+        """Returns the list of dictionaries of parameters for the power plant system model from the EPA databse."""
+        with open(os.path.join('es_gui', 'apps', 'data_manager', '_static', 'power_plant_model_params.json'), 'r') as fp:
+            model_params_all = json.load(fp)
+
+        return model_params_all
+    
+    def get_equity_analysis_params(self):
+        """Returns the list of dictionaries of parameters for the power plant system model from the EPA databse."""
+        with open(os.path.join('es_gui', 'apps', 'data_manager', '_static', 'equity_analysis_params.json'), 'r') as fp:
+            model_params_all = json.load(fp)
+
+        return model_params_all
     
     def get_pvwatts_search_params(self):
         """Returns the list of dictionaries of parameters for the PVWatts PV profile search."""
@@ -1239,6 +1315,159 @@ class DataManager(EventDispatcher):
             model_params_all = json.load(fp)
 
         return model_params_all
+    
+    def get_nsrdb_search_params(self):
+        """Returns the list of dictionaries of parameters for the NSRDB search."""
+        with open(os.path.join('es_gui', 'apps', 'data_manager', '_static', 'nsrdb_data_parameters.json'), 'r') as fp:
+            model_params_all = json.load(fp)
+
+        return model_params_all
+    
+    def scan_performance_data_bank(self):
+        """Scans the performance data bank to determine what data has been downloaded."""
+        # Check if data bank exists.
+        try:
+            os.listdir(self.data_bank_root)
+        except FileNotFoundError:
+            return
+
+        # Open loading screen.
+        self.loading_screen = LoadingModalView()
+        self.loading_screen.loading_text.text = 'Scanning data files...'
+        self.loading_screen.open()
+
+        self.n_threads_scanning = 1
+
+        def _scan_performance_data_bank():
+            # Quit?
+            if App.get_running_app().root.stop.is_set():
+                # Stop running this thread so the main Python process can exit.
+                return
+
+            self._scan_idf_data_bank()
+            self._scan_weather_data_bank()
+            self._scan_ess_profile_data_bank()
+
+            self.n_threads_scanning -= 1
+        
+        thread = threading.Thread(target=_scan_performance_data_bank)
+        thread.start() 
+        
+    def _scan_idf_data_bank(self):
+        """"""
+        idf_root = os.path.join(self.data_bank_root, 'idf')
+        idf_data_bank = {}
+
+        try:
+            os.listdir(idf_root)
+        except FileNotFoundError:
+            return
+        
+        try:
+            for idf_folder in os.scandir(idf_root):
+                if not idf_folder.name.startswith('.'):
+                    hvac_root = idf_folder.path
+                    
+                    hvac_name = idf_folder.name
+                    idf_data_bank[hvac_name] = []
+                    for hvac_file in os.scandir(hvac_root):
+                        if not hvac_file.name.startswith('.'):
+                            hvac_fname = hvac_file.name
+                            hvac_dir = hvac_file.path
+                            idf_data_bank[hvac_name].append([hvac_fname,hvac_dir])
+        except NotADirectoryError:
+            return
+        else:
+            self.data_bank['idf files'] = idf_data_bank
+        
+    def _scan_weather_data_bank(self):
+        """"""
+        weather_root = os.path.join(self.data_bank_root,'weather')
+        weather_data_bank = {}
+        
+        try: 
+            os.listdir(weather_root)
+        except FileNotFoundError:
+            return
+        
+        try:
+            for weather_folder in os.scandir(weather_root):
+                if not weather_folder.name.startswith('.'):
+                    location_root = weather_folder.path
+                    
+                    weather_key = weather_folder.name
+                    weather_data_bank[weather_key] = []
+                    for weather_file in os.scandir(location_root):
+                        if not weather_file.name.startswith('.'):
+                            weather_name = weather_file.name
+                            weather_dir = weather_file.path
+                            
+                            weather_data_bank[weather_key].append([weather_name,weather_dir])
+        except NotADirectoryError:
+            return
+        else:
+            self.data_bank['weather files'] = weather_data_bank
+        
+    def _scan_ess_profile_data_bank(self):
+        """"""
+        profile_root = os.path.join(self.data_bank_root, 'profile')
+        profile_data_bank = {}
+
+        try:
+            os.listdir(profile_root)
+        except FileNotFoundError:
+            return
+        
+        try:
+            for profile_folder in os.scandir(profile_root):
+                if not profile_folder.name.startswith('.'):
+                    p_root = profile_folder.path
+                    
+                    profile_key = profile_folder.name
+                    profile_data_bank[profile_key] = []
+                    for profile_file in os.scandir(p_root):
+                        if not profile_file.name.startswith('.'):
+                            profile_key = profile_folder.name
+                            profile_fname = profile_file.name
+                            profile_dir = profile_file.path
+                            
+                            profile_data_bank[profile_key].append([profile_fname,profile_dir])
+        except NotADirectoryError:
+            return
+        else:
+            self.data_bank['profiles'] = profile_data_bank   
+        
+    def get_tech_selection_params(self):
+        """Returns the dictionary of parameters (user selections) for the technology selection application."""
+        with open(os.path.join('es_gui', 'apps', 'data_manager', '_static', 'tech_selection_params.json'), 'r') as fp:
+            model_params_all = json.load(fp)
+            
+        return model_params_all
+        
+    def get_techs_db(self):
+        """"""
+        return pd.read_excel(os.path.join('es_gui', 'apps', 'data_manager', '_static', 'techs_Database.xlsx'), index_col='Storage technology')
+        
+    def get_applications_db(self):
+        """"""
+        apps_db = pd.read_csv(os.path.join('es_gui', 'apps', 'data_manager', '_static', 'applications_database.csv'), index_col=0)
+        return apps_db.sort_index()
+        
+    def get_tech_selection_all_options(self):
+        """"""
+        with open(os.path.join('es_gui', 'apps', 'data_manager', '_static', 'tech_selection_all_options_names.csv')) as csvfile:
+            reader = csv.reader(csvfile)
+            all_options_names = {}
+            for row in reader:
+                all_options_names[row[0]] = row[1:]   
+        
+        return all_options_names
+        
+#    def get_idfs(self):
+#        
+#        try:
+#            idf_files = self.data_bank[]
+        
 
 class DataManagerException(Exception):
     pass
